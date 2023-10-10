@@ -481,6 +481,10 @@ def build_graph(df, dataset):
                     df = muon_validation.make_hists_for_muon_scale_var_weights(
                         df, axes, results, cols, cols_gen_smeared
                     )
+                    df = muon_validation.make_hists_for_reso_weights_perse(
+                        df, axes, cols, "muonResolutionSyst_weights", "nominal_weight", results
+                    )
+
             ####################################################
 
             df = df.Define("Muon_cvhMomCov", "wrem::splitNestedRVec(Muon_cvhMomCov_Vals, Muon_cvhMomCov_Counts)")

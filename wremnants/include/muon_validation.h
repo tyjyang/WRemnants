@@ -70,4 +70,56 @@ private:
 
 };
 
+template<typename HIST, std::size_t NVar>
+class SmearingUncertaintyValidator{
+
+public:
+    using out_tensor_t = Eigen::TensorFixedSize<double, Eigen::Sizes<4>>;
+
+    SmearingUncertaintyValidator(HIST&& smearings) :
+        hsmear_(std::make_shared<const HIST>(std::move(smearings)))
+        {}
+
+    out_tensor_t operator() (const RVec<float>& pts, const RVec<float>& etas, const RVec<std::pair<double, double>> &weights, const double nominal_weight = 1.0) const {
+
+        out_tensor_t res;
+        res(4) = nominal_weight;
+        std::vector<double> dweightdsigmasqs;
+        std::vector<double> dsigmasqs;
+        std::vector<double> qopsqs;
+        std::vector<double> abs_dws;
+
+        // since there may be multiple muons
+        // we find the muon that has the largest weight
+        // and check the components of that single weight
+        for (size_t i = 0; i < pts.size(); i++) {
+            const float pt = pts[i];
+            const float eta = etas[i];
+            const double p = pt*std::cosh(eta);
+
+            dweightdsigmasqs.emplace_back(weights[i].second);
+            dsigmasqs.emplace_back(narf::get_value(*hsmear_, eta, pt).data()(0));
+            qopsqs.emplace_back(1./p/p);
+            double dw = dweightdsigmasqs.back() * dsigmasqs.back() * qopsqs.back();
+            res(0) *= 1 + dw;
+            abs_dws.emplace_back(abs(dw));
+        }
+        double dw_max = 0;
+        int idx_dw_max = 0;
+        for (size_t i = 0; i < abs_dws.size(); i++) {
+            if (abs_dws[i] > dw_max) {
+                dw_max = abs_dws[i];
+                idx_dw_max = i;
+            }
+        } 
+        res(1) = dweightdsigmasqs[idx_dw_max];
+        res(2) = dsigmasqs[idx_dw_max];
+        res(3) = qopsqs[idx_dw_max];
+        return res;
+    }
+
+private:
+    std::shared_ptr<const HIST> hsmear_;
+};
+
 }

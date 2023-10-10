@@ -16,6 +16,7 @@
 namespace wrem {
 
 using ROOT::VecOps::RVec;
+static double g_RESO_WEIGHT_THRES = 0.1;
 
 template<typename T>
 ROOT::VecOps::RVec<ROOT::VecOps::RVec<T>> splitNestedRVec(const ROOT::VecOps::RVec<T> &vec, const ROOT::VecOps::RVec<int> &counts) {
@@ -1068,9 +1069,10 @@ public:
             const double p = pt*std::cosh(eta);
             const double qopsq = 1./p/p;
 
-            auto const &dsigmarelsq = narf::get_value(*hsmear_, eta, pt).data();
-            const out_tensor_t iweight = 1. + dweightdsigmasq*dsigmarelsq*qopsq;
-            const out_tensor_t iweight_clamped = wrem::clip_tensor(iweight, 10.);
+            auto const &dsigmarelsq = wrem::clip_tensor(
+                narf::get_value(*hsmear_, eta, pt).data(), wrem::g_RESO_WEIGHT_THRES
+            );
+            const out_tensor_t iweight_clamped = 1. + dweightdsigmasq*dsigmarelsq*qopsq;
 
             res *= iweight_clamped;
         }
