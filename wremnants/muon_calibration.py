@@ -171,7 +171,8 @@ def make_muon_bias_helpers(args):
     return helper
 
 def make_muon_smearing_helpers(filename = f"{data_dir}/calibration/smearingrel_smooth.pkl.lz4",
-                               filenamevar = f"{data_dir}/calibration/smearing_variations_smooth.pkl.lz4"):
+                               filenamevar = f"{data_dir}/calibration/smearing_variations_smooth.pkl.lz4",
+                               var_method = 'eventWeights'):
     # this helper smears muon pT to match the resolution in data
 
     with lz4.frame.open(filename, "rb") as fin:
@@ -187,32 +188,47 @@ def make_muon_smearing_helpers(filename = f"{data_dir}/calibration/smearingrel_s
     neig = smearing_variations.axes[-1].size
     smearing_variations_boost = narf.hist_to_pyroot_boost(smearing_variations, tensor_rank = 1)
 
-    helper_var = ROOT.wrem.SmearingUncertaintyHelper[type(smearing_variations_boost), neig](ROOT.std.move(smearing_variations_boost))
+    helper_var = ROOT.wrem.SmearingUncertaintyHelper[type(smearing_variations_boost), neig](ROOT.std.move(smearing_variations_boost)) if var_method == 'eventWeights' else ROOT.wrem.DirectSmearingUncertaintyHelper[type(smearing_variations_boost), neig](ROOT.std.move(smearing_variations_boost))
+
 
     helper_var.tensor_axes = [smearing_variations.axes[-1]]
 
     return helper, helper_var
 
-def add_resolution_uncertainty(df, axes, results, nominal_cols, smearing_uncertainty_helper, reco_sel_GF):
+def add_resolution_uncertainty(df, axes, results, nominal_cols, smearing_uncertainty_helper, reco_sel_GF, var_method = 'eventWeights'):
 
     if smearing_uncertainty_helper is None:
         return df
 
-    df = df.Define("muonResolutionSyst_weights", smearing_uncertainty_helper,
-        [
-            f"{reco_sel_GF}_recoPt",
-            f"{reco_sel_GF}_recoEta",
-            f"{reco_sel_GF}_response_weight",
-            "nominal_weight"
-        ]
-    )
-
-    muonResolutionSyst_responseWeights = df.HistoBoost(
-            "nominal_muonResolutionSyst_responseWeights", axes,
-            [*nominal_cols, "muonResolutionSyst_weights"],
-            tensor_axes = smearing_uncertainty_helper.tensor_axes, storage=hist.storage.Double()
+    if var_method == 'eventWeights':
+        df = df.Define("muonResolutionSyst_weights", smearing_uncertainty_helper,
+            [
+                f"{reco_sel_GF}_recoPt",
+                f"{reco_sel_GF}_recoEta",
+                f"{reco_sel_GF}_response_weight",
+                "nominal_weight"
+            ]
         )
-    results.append(muonResolutionSyst_responseWeights)
+    
+        muonResolutionSyst_responseWeights = df.HistoBoost(
+                "nominal_muonResolutionSyst_responseWeights", axes,
+                [*nominal_cols, "muonResolutionSyst_weights"],
+                tensor_axes = smearing_uncertainty_helper.tensor_axes, storage=hist.storage.Double()
+            )
+        results.append(muonResolutionSyst_responseWeights)
+    elif var_method == 'directSmearing':
+        df = df.Define("nom_pt", nominal_cols[1])
+        df = df.Define("nom_eta", nominal_cols[0])
+        df = df.Define("goodMuons_pt0_resoVarDirectSmearing", smearing_uncertainty_helper,
+            ["run", "luminosityBlock", "event", "nom_pt", f"nom_eta"]
+        )
+        for i in range(120):
+            df = df.Define(f"goodMuons_pt0_resoVarDirectSmearing{i}", f"goodMuons_pt0_resoVarDirectSmearing({i})")
+            results.append(df.HistoBoost(
+                f"muonResolutionSyst_directSmearing{i}", axes,
+                [nominal_cols[0], f"goodMuons_pt0_resoVarDirectSmearing{i}", *nominal_cols[2:], "nominal_weight"],
+                storage=hist.storage.Double()
+            ))
 
     return df
 

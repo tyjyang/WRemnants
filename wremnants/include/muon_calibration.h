@@ -16,7 +16,8 @@
 namespace wrem {
 
 using ROOT::VecOps::RVec;
-static double g_RESO_WEIGHT_THRES = 0.1;
+static const double g_RESO_WEIGHT_LB= 0.9;
+static const double g_RESO_WEIGHT_UB = 1.1;
 
 template<typename T>
 ROOT::VecOps::RVec<ROOT::VecOps::RVec<T>> splitNestedRVec(const ROOT::VecOps::RVec<T> &vec, const ROOT::VecOps::RVec<int> &counts) {
@@ -1053,13 +1054,14 @@ public:
     using out_tensor_t = Eigen::TensorFixedSize<double, Eigen::Sizes<NVar>>;
 
     SmearingUncertaintyHelper(HIST&& smearings) :
-        hsmear_(std::make_shared<const HIST>(std::move(smearings)))
+        hsmear_(std::make_shared<const HIST>(std::move(smearings))),
+        hash_(std::hash<std::string>()("SmearingHelper"))
         {}
 
     out_tensor_t operator() (const RVec<float>& pts, const RVec<float>& etas, const RVec<std::pair<double, double>> &weights, const double nominal_weight = 1.0) const {
 
         out_tensor_t res;
-        res.setConstant(nominal_weight);
+        res.setConstant(1.0);
 
         for (size_t i = 0; i < pts.size(); i++) {
             const float pt = pts[i];
@@ -1069,19 +1071,73 @@ public:
             const double p = pt*std::cosh(eta);
             const double qopsq = 1./p/p;
 
-            auto const &dsigmarelsq = wrem::clip_tensor(
-                narf::get_value(*hsmear_, eta, pt).data(), wrem::g_RESO_WEIGHT_THRES
-            );
-            const out_tensor_t iweight_clamped = 1. + dweightdsigmasq*dsigmarelsq*qopsq;
+            auto const &dsigmarelsq = narf::get_value(*hsmear_, eta, pt).data();
+            const out_tensor_t iweight = 1. + dweightdsigmasq*dsigmarelsq*qopsq;
 
-            res *= iweight_clamped;
+            res *= iweight;
+        }
+        for (size_t i = 0; i < NVar; i++) {
+            //if (res(i) < g_RESO_WEIGHT_LB || res(i) > g_RESO_WEIGHT_UB) {
+            //  res(i) = 1.0;
+            //}
+            res(i) = std::clamp(res(i), g_RESO_WEIGHT_LB, g_RESO_WEIGHT_UB);
+            res(i) *= nominal_weight;
         }
         return res;
     }
 
 private:
+    const std::size_t hash_;
     std::shared_ptr<const HIST> hsmear_;
 };
+
+// derive the smearing uncertainties from an extra, direct smearing on the muon pt
+// from sigma^2{{sigma^2_{data} - sigma^2_{MC}}
+template<typename HIST, std::size_t NVar>
+class DirectSmearingUncertaintyHelper{
+
+public:
+    using out_tensor_t = Eigen::TensorFixedSize<double, Eigen::Sizes<NVar>>;
+
+    DirectSmearingUncertaintyHelper(HIST&& smearings) :
+        hash_(std::hash<std::string>()("SmearingHelper")),
+        hsmear_(std::make_shared<const HIST>(std::move(smearings)))
+        {}
+
+    out_tensor_t operator() (
+        const unsigned int run, const unsigned int lumi, const unsigned long long event,
+        const float pt, const float eta
+    ) const {
+        std::seed_seq seq{hash_, std::size_t(run), std::size_t(lumi), std::size_t(event)};
+        std::mt19937 rng(seq);
+
+        out_tensor_t res;
+        const double p = pt*std::cosh(eta);
+        const double qop = 1./p;
+
+        const auto &dsigmarelsq = narf::get_value(*hsmear_, eta, pt).data();
+        std::normal_distribution gaus{0., 1.};
+        const double sigma_std = gaus(rng);
+
+        for (int i = 0; i < NVar; i++) {
+            const double k = 1. / pt;
+            const double ksmeared = k + std::sqrt(abs(dsigmarelsq(i))) * sigma_std * k;
+            res(i) = 1./ksmeared;
+        }
+//        cout << "+++++++++++++++++++++++++++++++++++++++" << std::endl;
+//        cout << "std dev: " << sigma_std << std::endl;
+//        cout << "dsigmarelsq: " << std::sqrt(dsigmarelsq(0)) << std::endl;
+//        cout << "qopsp: " << qop << std::endl;
+//        cout << pt << "," << res(0) << std::endl;
+        res(0) = pt * 1.0001;
+        return res;
+    }
+
+private:
+    const std::size_t hash_;
+    std::shared_ptr<const HIST> hsmear_;
+};
+
 
 template<typename T>
 double test_smearing_uncertainty_helper(const T &helper) {

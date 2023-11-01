@@ -213,7 +213,7 @@ def make_hists_for_reso_weights_perse(
 ):
     df = df.Define(f"weights_reso", f"{weights_col}(0)/{nominal_weight_col}")
     axis_weights = hist.axis.Regular(
-        2000, 1. - ROOT.wrem.g_RESO_WEIGHT_THRES, 1. + ROOT.wrem.g_RESO_WEIGHT_THRES,
+        2000, ROOT.wrem.g_RESO_WEIGHT_LB, ROOT.wrem.g_RESO_WEIGHT_UB,
         underflow=True, overflow=True, name = "weights"
     )
     weights_reso = df.HistoBoost(
@@ -322,9 +322,9 @@ def make_muon_smearing_validator(
 
 def make_hists_for_reso_weight_components(df, nominal_axes, nominal_cols, results, reco_sel_GF):
     axis_reso_weight = hist.axis.Regular(10, -10, 10, underflow = True, overflow = True, name = 'reso_weight')
-    axis_dweightdsigmasq = hist.axis.Regular(10, -50000000, 250000000, underflow = True, overflow = True, name = 'dweightdsigmasq')
-    axis_dsigmasq = hist.axis.Regular(10, -0.000004, 0.000003, underflow = True, overflow = True, name = 'dsigmasq')
-    axis_qopsq = hist.axis.Regular(10, 0, 0.002, underflow = True, overflow = True, name = 'qopsq')
+    axis_dweightdsigmasq = hist.axis.Regular(100, -1000000000, 5000000000, underflow = True, overflow = True, name = 'dweightdsigmasq')
+    axis_dsigmasq = hist.axis.Regular(100, -0.000004, 0.000003, underflow = True, overflow = True, name = 'dsigmasq')
+    axis_qopsq = hist.axis.Regular(100, 0, 0.002, underflow = True, overflow = True, name = 'qopsq')
     smearing_uncertainty_validator = make_muon_smearing_validator()
     df = df.Define("muonResolutionSyst_weights_components", smearing_uncertainty_validator,
         [
