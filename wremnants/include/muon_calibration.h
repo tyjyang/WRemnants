@@ -1551,6 +1551,9 @@ public:
 
         RVec<double> res;
         res.reserve(recPts.size());
+        if (!(recPts.size() > 0)) {
+          cout << "anomaly" << std::endl;
+        }
         for (std::size_t i = 0; i < recPts.size(); ++i) {
             const double pt = recPts[i];
             const double eta = recEtas[i];

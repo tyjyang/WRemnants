@@ -214,6 +214,15 @@ def add_resolution_uncertainty(df, axes, results, nominal_cols, smearing_uncerta
         )
     results.append(muonResolutionSyst_responseWeights)
 
+    df = df.Define("one", "1U")
+    helper = ROOT.wrem.SmearingHelperSimple(1e-3)
+    df = df.Define("smeared_pt", helper, ['one', muon_var_name('Muon_lbl', 'pt'), muon_var_name('Muon_lbl', 'eta'), muon_var_name('Muon_lbl', 'charge')])
+    df = df.Define("smeared_pt0", "smeared_pt[0]")
+    results.append(df.HistoBoost(
+        "hist_smaered_pt", axes,
+        [nominal_cols[0], 'smeared_pt0', *nominal_cols[2:], 'nominal_weight']
+    ))
+
     return df
 
 
