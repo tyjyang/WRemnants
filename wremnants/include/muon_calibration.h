@@ -1571,10 +1571,47 @@ public:
             const double ptout = pout/std::cosh(eta);
 
 
-            res.emplace_back(ptout);
+            //res.emplace_back(ptout);
+            res.emplace_back(pt * 1.0001);
         }
 
         return res;
+    }
+
+
+private:
+    double sigmarel_;
+    std::vector<mt19937> rng_;
+
+};
+
+class SmearingHelperSSimple {
+
+public:
+    SmearingHelperSSimple(const double sigmarel, const unsigned int nslots = 1) : sigmarel_(sigmarel) {
+        const unsigned int nslotsactual = std::max(nslots, 1U);
+        rng_.reserve(nslotsactual);
+        auto const hash = std::hash<std::string>()("SmearingHelperSimple");
+        for (std::size_t islot = 0; islot < nslotsactual; ++islot) {
+            std::seed_seq seq{hash, islot};
+            rng_.emplace_back(seq);
+        }
+    }
+
+    double operator() (const unsigned int slot, const float pt, const float eta, const int charge) {
+
+        const double qop = charge/pt/std::cosh(eta);
+
+        const double dsigma = sigmarel_*qop;
+
+        std::normal_distribution gaus{qop, dsigma};
+
+        const double qopout = gaus(rng_[slot]);
+        const double pout = std::fabs(1./qopout);
+
+        const double ptout = pout/std::cosh(eta);
+
+        return ptout;
     }
 
 

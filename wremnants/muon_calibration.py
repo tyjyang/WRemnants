@@ -193,7 +193,7 @@ def make_muon_smearing_helpers(filename = f"{data_dir}/calibration/smearingrel_s
 
     return helper, helper_var
 
-def add_resolution_uncertainty(df, axes, results, nominal_cols, smearing_uncertainty_helper, reco_sel_GF):
+def add_resolution_uncertainty(df, axes, results, nominal_cols, smearing_uncertainty_helper, reco_sel_GF, whatAnalysis):
 
     if smearing_uncertainty_helper is None:
         return df
@@ -215,14 +215,33 @@ def add_resolution_uncertainty(df, axes, results, nominal_cols, smearing_uncerta
     results.append(muonResolutionSyst_responseWeights)
 
     df = df.Define("one", "1U")
-    helper = ROOT.wrem.SmearingHelperSimple(1e-3)
-    df = df.Define("smeared_pt", helper, ['one', muon_var_name('Muon_lbl', 'pt'), muon_var_name('Muon_lbl', 'eta'), muon_var_name('Muon_lbl', 'charge')])
-    df = df.Define("smeared_pt0", "smeared_pt[0]")
-    results.append(df.HistoBoost(
-        "hist_smaered_pt", axes,
-        [nominal_cols[0], 'smeared_pt0', *nominal_cols[2:], 'nominal_weight']
-    ))
+    helper = ROOT.wrem.SmearingHelperSimple(1e-3, max(ROOT.ROOT.GetThreadPoolSize(), 1))
 
+    if whatAnalysis == ROOT.wrem.AnalysisType.Wmass:
+        df = df.DefineSlot("smeared_pt", helper, [muon_var_name('Muon_lbl', 'pt'), muon_var_name('Muon_lbl', 'eta'), muon_var_name('Muon_lbl', 'charge')])
+        df = df.Define("smeared_pt0", "smeared_pt[goodMuons][0]")
+        df = df.Define("lbl_pt0", "Muon_lblPt[goodMuons][0]")
+        results.append(df.HistoBoost(
+            "hist_lbl_pt", axes,
+            [nominal_cols[0], 'lbl_pt0', *nominal_cols[2:], 'nominal_weight']
+        ))
+        results.append(df.HistoBoost(
+            "hist_smaered_pt", axes,
+            [nominal_cols[0], 'smeared_pt0', *nominal_cols[2:], 'nominal_weight']
+        ))
+    elif whatAnalysis == ROOT.wrem.AnalysisType.Dilepton:
+        helper = ROOT.wrem.SmearingHelperSSimple(1e-3, max(ROOT.ROOT.GetThreadPoolSize(), 1))
+        df = df.DefineSlot("trigMuons_pt0_smeared", helper, ['trigMuons_pt0', 'trigMuons_eta0', 'trigMuons_charge0'])
+        df = df.DefineSlot("nonTrigMuons_pt0_smeared", helper, ['nonTrigMuons_pt0', 'nonTrigMuons_eta0', 'nonTrigMuons_charge0'])
+        df = df.Define("trigMuons_mom4_smeared", "ROOT::Math::PtEtaPhiMVector(trigMuons_pt0_smeared, trigMuons_eta0, trigMuons_phi0, wrem::muon_mass)")
+        df = df.Define("nonTrigMuons_mom4_smeared", "ROOT::Math::PtEtaPhiMVector(nonTrigMuons_pt0_smeared, nonTrigMuons_eta0, nonTrigMuons_phi0, wrem::muon_mass)")
+        df = df.Define("ll_mom4_smeared", "ROOT::Math::PxPyPzEVector(trigMuons_mom4_smeared)+ROOT::Math::PxPyPzEVector(nonTrigMuons_mom4_smeared)")
+        df = df.Define("mll_smeared", "ll_mom4_smeared.mass()")
+        results.append(df.HistoBoost(
+            "hist_smeared_mll", axes,
+            ['mll_smeared', *nominal_cols[1:], 'nominal_weight']
+        ))
+        print("hello")
     return df
 
 
