@@ -230,7 +230,7 @@ def add_resolution_uncertainty(df, axes, results, nominal_cols, smearing_uncerta
             [nominal_cols[0], 'smeared_pt0', *nominal_cols[2:], 'nominal_weight']
         ))
     elif whatAnalysis == ROOT.wrem.AnalysisType.Dilepton:
-        helper = ROOT.wrem.SmearingHelperSSimple(1e-3, max(ROOT.ROOT.GetThreadPoolSize(), 1))
+        helper = ROOT.wrem.SmearingHelperSSimple(1e-2, max(ROOT.ROOT.GetThreadPoolSize(), 1))
         df = df.DefineSlot("trigMuons_pt0_smeared", helper, ['trigMuons_pt0', 'trigMuons_eta0', 'trigMuons_charge0'])
         df = df.DefineSlot("nonTrigMuons_pt0_smeared", helper, ['nonTrigMuons_pt0', 'nonTrigMuons_eta0', 'nonTrigMuons_charge0'])
         df = df.Define("trigMuons_mom4_smeared", "ROOT::Math::PtEtaPhiMVector(trigMuons_pt0_smeared, trigMuons_eta0, trigMuons_phi0, wrem::muon_mass)")
