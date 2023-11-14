@@ -2,6 +2,7 @@ import ROOT
 import hist
 import numpy as np
 import copy
+from math import pi
 from utilities import boostHistHelpers as hh,common,logging
 from wremnants import theory_corrections
 from scipy import ndimage
@@ -378,15 +379,21 @@ def make_theory_corr_hists(df, name, axes, cols, helpers, generators, modify_cen
 
         var_axis = helpers[generator].tensor_axes[-1]
 
-        # special treatment for Omega since it needs to be decorrelated in charge and rapidity
-        if isinstance(var_axis, hist.axis.StrCategory) and any(var_label.startswith("Omega") for var_label in var_axis):
-            omegaidxs = [var_axis.index(var_label) for var_label in var_axis if var_label.startswith("Omega")]
+        def is_flavor_dependent_np(var_label):
+            return var_label.startswith("Omega") \
+                    or var_label.startswith("Delta_Omega") \
+                    or var_label.startswith("Lambda2") \
+                    or var_label.startswith("Delta_Lambda2")
+
+        # special treatment for Lambda2/Omega since they need to be decorrelated in charge and possibly rapidity
+        if isinstance(var_axis, hist.axis.StrCategory) and any(is_flavor_dependent_np(var_label) for var_label in var_axis):
+            omegaidxs = [var_axis.index(var_label) for var_label in var_axis if is_flavor_dependent_np(var_label)]
 
             # include nominal as well
             omegaidxs = [0] + omegaidxs
 
             if f"{generator}Omega" not in df.GetColumnNames():
-                df = df.Define(f"{generator}Omega",
+                df = df.Define(f"{generator}FlavDepNP",
                                 f"""
                                 constexpr std::array<std::ptrdiff_t, {len(omegaidxs)}> idxs = {{{",".join([str(idx) for idx in omegaidxs])}}};
                                 Eigen::TensorFixedSize<double, Eigen::Sizes<{len(omegaidxs)}>> res;
@@ -396,29 +403,16 @@ def make_theory_corr_hists(df, name, axes, cols, helpers, generators, modify_cen
                                 return res;
                                 """)
 
-            axis_Omega = hist.axis.StrCategory([var_axis[idx] for idx in omegaidxs], name = var_axis.name)
+            axis_FlavDepNP = hist.axis.StrCategory([var_axis[idx] for idx in omegaidxs], name = var_axis.name)
 
-            hist_name_Omega = f"{name}_{generator}Omega"
+            hist_name_FlavDepNP = f"{name}_{generator}FlavDepNP"
             axis_chargegen = axis_chargeWgen if isW else axis_chargeZgen
-            axes_Omega = axes + [axis_absYVgen, axis_chargegen]
-            cols_Omega = cols + ["absYVgen", "chargeVgen", f"{generator}Omega"]
-            unc_Omega = df.HistoBoost(hist_name_Omega, axes_Omega, cols_Omega, tensor_axes = [axis_Omega])
-            res.append(unc_Omega)
+            axes_FlavDepNP = axes + [axis_absYVgen, axis_chargegen]
+            cols_FlavDepNP = cols + ["absYVgen", "chargeVgen", f"{generator}FlavDepNP"]
+            unc_FlavDepNP = df.HistoBoost(hist_name_FlavDepNP, axes_FlavDepNP, cols_FlavDepNP, tensor_axes = [axis_FlavDepNP])
+            res.append(unc_FlavDepNP)
 
     return res
-
-def scale_angular_moments(hist_moments_scales, sumW2=False, createNew=False):
-    # e.g. from arxiv:1708.00008 eq. 2.13, note A_0 is NOT the const term!
-    scales = np.array([1., -10., 5., 10., 4., 4., 5., 5., 4.])
-
-    hel_idx = hist_moments_scales.axes.name.index("helicity")
-    scaled_vals = np.moveaxis(hist_moments_scales.view(flow=True), hel_idx, -1)*scales
-    if createNew:
-        hnew = hist.Hist(*hist_moments_scales.axes, storage = hist.storage.Weight() if sumW2 else hist.storage.Double())
-    else:
-        hnew = hist_moments_scales
-    hnew.view(flow=True)[...] = np.moveaxis(scaled_vals, -1, hel_idx) 
-    return hnew
 
 def replace_by_neighbors(vals, replace):
     if np.count_nonzero(replace) == vals.size:
@@ -427,15 +421,13 @@ def replace_by_neighbors(vals, replace):
     indices = ndimage.distance_transform_edt(replace, return_distances=False, return_indices=True)
     return vals[tuple(indices)]
 
-def moments_to_angular_coeffs(hist_moments_scales, cutoff=1e-5, sumW2=False):
-    hasSumW2 = sumW2 or hist_moments_scales._storage_type == hist.storage.Weight
-
+def moments_to_angular_coeffs(hist_moments_scales, cutoff=1e-5):
     if hist_moments_scales.empty():
        raise ValueError("Cannot make coefficients from empty hist")
     # broadcasting happens right to left, so move to rightmost then move back
     hel_ax = hist_moments_scales.axes["helicity"]
     hel_idx = hist_moments_scales.axes.name.index("helicity")
-    vals = np.moveaxis(scale_angular_moments(hist_moments_scales, hasSumW2).view(flow=True), hel_idx, -1)
+    vals = np.moveaxis(hist_moments_scales.view(flow=True), hel_idx, -1)
     values = vals.value if hasattr(vals,"value") else vals
     
     # select constant term, leaving dummy axis for broadcasting
@@ -443,16 +435,11 @@ def moments_to_angular_coeffs(hist_moments_scales, cutoff=1e-5, sumW2=False):
     norm_vals = values[...,unpol_idx:unpol_idx+1]
     norm_vals = np.where(np.abs(norm_vals) < cutoff, np.ones_like(norm_vals), norm_vals)
 
-    # e.g. from arxiv:1708.00008 eq. 2.13, note A_0 is NOT the const term!
-    offsets = np.array([0., 4., 0., 0., 0., 0., 0., 0., 0.])
+    coeffs = vals / norm_vals
 
-    coeffs = vals / norm_vals + offsets
-
-    # replace values in zero-xsec regions (otherwise A0 is spuriously set to 4.0 from offset)
-    coeffs = np.where(np.abs(values) < cutoff, np.full_like(vals, hist.accumulators.WeightedSum(0,0) if hasSumW2 else 0), coeffs)
     coeffs = np.moveaxis(coeffs, -1, hel_idx)
 
-    hist_coeffs_scales = hist.Hist(*hist_moments_scales.axes, storage = hist.storage.Weight() if hasSumW2 else hist.storage.Double(),
+    hist_coeffs_scales = hist.Hist(*hist_moments_scales.axes, storage = hist_moments_scales._storage_type(),
         name = "hist_coeffs_scales", data = coeffs
     )
 
