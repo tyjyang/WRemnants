@@ -388,15 +388,19 @@ class CardTool(object):
             return axLabel.format(i=entry)
         if formatWithValue:
             if formatWithValue == "center":
-                edges = axis.centers
+                entry = axis.centers[entry]
             elif formatWithValue == "low":
-                edges = axis.edges[:-1]
+                entry = axis.edges[:-1][entry]
             elif formatWithValue == "high":
-                edges = axis.edges[1:]
+                entry = axis.edges[1:][entry]
+            elif formatWithValue == "edges":
+                low = axis.edges[entry]
+                high = axis.edges[entry+1]
+                lowstr = f"{low:0.1f}".replace(".", "p") if not low.is_integer() else str(int(low))
+                highstr = f"{high:0.1f}".replace(".", "p") if not high.is_integer() else str(int(high))
+                entry = f"{lowstr}_{highstr}"
             else:
                 raise ValueError(f"Invalid formatWithValue choice {formatWithValue}.")
-
-            entry = edges[entry]
 
         if type(entry) in [float, np.float64]:
             entry = f"{entry:0.1f}".replace(".", "p") if not entry.is_integer() else str(int(entry))
@@ -722,12 +726,7 @@ class CardTool(object):
                 hists.extend([procDictFromNomi[proc].hists[pseudoData] for proc in processesFromNomi])
             # done, now sum all histograms
             hdata = hh.sumHists(hists)
-            if self.pseudoDataAxes[idx] is None:
-                extra_ax = [ax for ax in hdata.axes.name if ax not in self.fit_axes]
-                if len(extra_ax) == 1:
-                    self.pseudoDataAxes[idx] = extra_ax[0]
-                    logger.info(f"Setting pseudoDataSystAx[{idx}] to {extra_ax[0]}")
-            elif self.pseudoDataAxes[idx] not in hdata.axes.name:
+            if self.pseudoDataAxes[idx] is not None and self.pseudoDataAxes[idx] not in hdata.axes.name:
                 raise RuntimeError(f"Pseudodata axis {self.pseudoDataAxes[idx]} not found in {hdata.axes.name}.")
             hdatas.append(hdata)
         return hdatas
