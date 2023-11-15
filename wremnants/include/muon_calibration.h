@@ -1058,7 +1058,12 @@ public:
         hash_(std::hash<std::string>()("SmearingHelper"))
         {}
 
-    out_tensor_t operator() (const RVec<float>& pts, const RVec<float>& etas, const RVec<std::pair<double, double>> &weights, const double nominal_weight = 1.0) const {
+    out_tensor_t operator() (
+        const RVec<float>& pts,
+        const RVec<float>& etas,
+        const RVec<std::pair<double, double>> &weights,
+        const double nominal_weight = 1.0,
+        const double factor = 1.0) const {
 
         out_tensor_t res;
         res.setConstant(1.0);
@@ -1072,7 +1077,7 @@ public:
             const double qopsq = 1./p/p;
 
             auto const &dsigmarelsq = narf::get_value(*hsmear_, eta, pt).data();
-            const out_tensor_t iweight = 1. + dweightdsigmasq*dsigmarelsq*qopsq;
+            const out_tensor_t iweight = 1. + dweightdsigmasq * dsigmarelsq * factor * factor * qopsq;
 
             res *= iweight;
         }
@@ -1106,7 +1111,7 @@ public:
 
     out_tensor_t operator() (
         const unsigned int run, const unsigned int lumi, const unsigned long long event,
-        const float pt, const float eta
+        const float pt, const float eta, const double factor = 1.0
     ) const {
         std::seed_seq seq{hash_, std::size_t(run), std::size_t(lumi), std::size_t(event)};
         std::mt19937 rng(seq);
@@ -1121,7 +1126,7 @@ public:
 
         for (int i = 0; i < NVar; i++) {
             const double k = 1. / pt;
-            const double ksmeared = k + std::sqrt(abs(dsigmarelsq(i))) * sigma_std * k;
+            const double ksmeared = k + std::sqrt(abs(dsigmarelsq(i))) * factor * sigma_std * k;
             res(i) = 1./ksmeared;
         }
 //        cout << "+++++++++++++++++++++++++++++++++++++++" << std::endl;
@@ -1129,7 +1134,7 @@ public:
 //        cout << "dsigmarelsq: " << std::sqrt(dsigmarelsq(0)) << std::endl;
 //        cout << "qopsp: " << qop << std::endl;
 //        cout << pt << "," << res(0) << std::endl;
-        res(0) = pt * 1.0001;
+        //res(0) = pt * 1.0001;
         return res;
     }
 
@@ -1641,6 +1646,31 @@ private:
     double sigmarel_;
     std::vector<mt19937> rng_;
 
+};
+
+class SmearingHelperSSimpleTransform {
+
+public:
+    SmearingHelperSSimpleTransform(const double sigmarel) : sigmarel_(sigmarel) {}
+
+    double operator() (float pt, float eta, int charge, const RVec<std::pair<double, double>> &weights) {
+
+        const double dweightdscale = weights[0].first;
+
+        const double qop = charge/pt/std::cosh(eta);
+
+        const double dsigmasq = sigmarel_*sigmarel_*qop*qop;
+
+        const double qopout = qop + 0.5*dweightdscale*dsigmasq;
+        const double pout = std::fabs(1./qopout);
+
+        const double ptout = pout/std::cosh(eta);
+
+        return ptout;
+    }
+
+private:
+    double sigmarel_;
 };
 
 class SmearingHelperSSimple {

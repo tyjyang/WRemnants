@@ -502,7 +502,7 @@ def build_graph(df, dataset):
                     z_non_closure_parametrized_helper, z_non_closure_binned_helper, reco_sel_GF
                 )
                 # add nuisances from the data/MC resolution mismatch
-                df = muon_calibration.add_resolution_uncertainty(df, axes, results, cols, smearing_uncertainty_helper, reco_sel_GF, args.resoVarMethod)
+                df = muon_calibration.add_resolution_uncertainty(df, axes, results, cols, smearing_uncertainty_helper, reco_sel_GF, thisAnalysis, args.resoVarMethod) 
                 if args.validationHists:
                     df = muon_validation.make_hists_for_muon_scale_var_weights(
                         df, axes, results, cols, cols_gen_smeared

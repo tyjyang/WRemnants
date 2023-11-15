@@ -21,6 +21,8 @@ narf.clingutils.Declare('#include "lowpu_utils.h"')
 
 data_dir = common.data_dir
 
+simple_sigma_rel = 1e-2
+
 def make_muon_calibration_helpers(args,
         mc_filename=data_dir+"/calibration/correctionResults_v718_idealgeom_gensim.root", 
         data_filename=data_dir+"/calibration/correctionResults_v721_recjpsidata.root", 
@@ -188,76 +190,166 @@ def make_muon_smearing_helpers(filename = f"{data_dir}/calibration/smearingrel_s
     neig = smearing_variations.axes[-1].size
     smearing_variations_boost = narf.hist_to_pyroot_boost(smearing_variations, tensor_rank = 1)
 
-    helper_var = ROOT.wrem.SmearingUncertaintyHelper[type(smearing_variations_boost), neig](ROOT.std.move(smearing_variations_boost)) if var_method == 'eventWeights' else ROOT.wrem.DirectSmearingUncertaintyHelper[type(smearing_variations_boost), neig](ROOT.std.move(smearing_variations_boost))
+    helper_var = {}
+    if 'eventWeights' in var_method: 
+        helper_var['eventWeights'] = ROOT.wrem.SmearingUncertaintyHelper[type(smearing_variations_boost), neig](
+            ROOT.std.move(smearing_variations_boost)
+        )
+        helper_var['eventWeights'].tensor_axes = [smearing_variations.axes[-1]]
 
+    if 'directSmearing' in var_method:
+        helper_var['directSmearing'] = ROOT.wrem.DirectSmearingUncertaintyHelper[type(smearing_variations_boost), neig](
+            ROOT.std.move(smearing_variations_boost)
+        )
+        helper_var['directSmearing'].tensor_axes = [smearing_variations.axes[-1]]
 
-    helper_var.tensor_axes = [smearing_variations.axes[-1]]
+    if 'directSmearingSimple' in var_method:
+        helper_var['directSmearingSimple'] = ROOT.wrem.SmearingHelperSSimple(simple_sigma_rel, max(ROOT.ROOT.GetThreadPoolSize(), 1))
+
+    if 'simpleTransform' in var_method:
+        helper_var['simpleTransform'] = ROOT.wrem.SmearingHelperSSimpleTransform(simple_sigma_rel)
+
+    if 'simpleWeights' in var_method:
+        helper_var['simpleWeights'] = ROOT.wrem.SmearingHelperSimpleWeight(simple_sigma_rel)
 
     return helper, helper_var
 
-def add_resolution_uncertainty(df, axes, results, nominal_cols, smearing_uncertainty_helper, reco_sel_GF, var_method = 'eventWeights'):
+def add_resolution_uncertainty(df, axes, results, nominal_cols, smearing_uncertainty_helper, reco_sel_GF, whatAnalysis, var_method = ['eventWeights']):
 
     if smearing_uncertainty_helper is None:
         return df
 
-    if var_method == 'eventWeights':
-        df = df.Define("muonResolutionSyst_weights", smearing_uncertainty_helper,
+    df = df.DefinePerSample("ten", "10.0")
+    print(var_method)
+    print(smearing_uncertainty_helper.keys())
+    if 'eventWeights' in var_method:
+        helper = smearing_uncertainty_helper['eventWeights']
+        df = df.Define("muonResolutionSyst_weights", helper,
             [
                 f"{reco_sel_GF}_recoPt",
                 f"{reco_sel_GF}_recoEta",
                 f"{reco_sel_GF}_response_weight",
+                "nominal_weight",
+                "ten"
+            ]
+        )
+        muonResolutionSyst_responseWeights = df.HistoBoost(
+            "nominal_muonResolutionSyst_responseWeights", axes,
+            [*nominal_cols, "muonResolutionSyst_weights"],
+            tensor_axes = helper.tensor_axes, storage=hist.storage.Double()
+        )
+        results.append(muonResolutionSyst_responseWeights)
+
+    if 'directSmearing' in var_method:
+        helper = smearing_uncertainty_helper['directSmearing']
+        if whatAnalysis == ROOT.wrem.AnalysisType.Wmass:
+            df = df.Define("nom_pt", nominal_cols[1])
+            df = df.Define("nom_eta", nominal_cols[0])
+            df = df.Define("goodMuons_pt0_resoVarDirectSmearing", helper,
+                ["run", "luminosityBlock", "event", "nom_pt", "nom_eta", "ten"]
+            )
+            for i in range(120):
+                df = df.Define(f"goodMuons_pt0_resoVarDirectSmearing{i}", f"goodMuons_pt0_resoVarDirectSmearing({i})")
+                results.append(df.HistoBoost(
+                    f"reso_direct_smear{i}", axes,
+                    [nominal_cols[0], f"goodMuons_pt0_resoVarDirectSmearing{i}", *nominal_cols[2:], "nominal_weight"],
+                    storage=hist.storage.Double()
+                ))
+        elif whatAnalysis == ROOT.wrem.AnalysisType.Dilepton:
+            df = df.Define(
+                'trigMuons_pt0_direct_smeared', helper, [
+                    'run', 'luminosityBlock', 'event', 'trigMuons_pt0', 'trigMuons_eta0', 'ten'
+                ]
+            )
+            df = df.Define(
+                'nonTrigMuons_pt0_direct_smeared', helper, [
+                    'run', 'luminosityBlock', 'event', 'nonTrigMuons_pt0', 'nonTrigMuons_eta0', 'ten'
+                ]
+            )
+            for i in range(120):
+                df = df.Define(f'trigMuons_pt0_direct_smeared{i}', f'trigMuons_pt0_direct_smeared({i})')
+                df = df.Define(f'nonTrigMuons_pt0_direct_smeared{i}', f'nonTrigMuons_pt0_direct_smeared({i})')
+                df = df.Define(f"trigMuons_mom4_direct_smeared{i}", f"ROOT::Math::PtEtaPhiMVector(trigMuons_pt0_direct_smeared{i}, trigMuons_eta0, trigMuons_phi0, wrem::muon_mass)")
+                df = df.Define(f"nonTrigMuons_mom4_direct_smeared{i}", f"ROOT::Math::PtEtaPhiMVector(nonTrigMuons_pt0_direct_smeared{i}, nonTrigMuons_eta0, nonTrigMuons_phi0, wrem::muon_mass)")
+                df = df.Define(f"ll_mom4_direct_smeared{i}", f"ROOT::Math::PxPyPzEVector(trigMuons_mom4_direct_smeared{i})+ROOT::Math::PxPyPzEVector(nonTrigMuons_mom4_direct_smeared{i})")
+                df = df.Define(f"mll_direct_smeared{i}", f"ll_mom4_direct_smeared{i}.mass()")
+                results.append(df.HistoBoost(
+                    f"reso_direct_smear{i}", axes,
+                    [f'mll_direct_smeared{i}', *nominal_cols[1:], 'nominal_weight']
+                ))
+
+    if 'directSmearingSimple' in var_method or 'simpleTransform' in var_method or 'simpleWeights' in var_method:
+        if whatAnalysis == ROOT.wrem.AnalysisType.Wmass:
+            df = df.Define("lbl_pt0", "Muon_lblPt[goodMuons][0]")
+            results.append(df.HistoBoost(
+                "hist_lbl_pt", axes,
+                [nominal_cols[0], 'lbl_pt0', *nominal_cols[2:], 'nominal_weight']
+            ))
+
+    if 'directSmearingSimple' in var_method:
+        helper = smearing_uncertainty_helper['directSmearingSimple']
+
+        if whatAnalysis == ROOT.wrem.AnalysisType.Wmass:
+            helper = ROOT.wrem.SmearingHelperSimple(simple_sigma_rel, max(ROOT.ROOT.GetThreadPoolSize(), 1))
+            df = df.DefineSlot("direct_smeared_simple_pt0", helper, [muon_var_name('Muon_lbl', 'pt'), muon_var_name('Muon_lbl', 'eta'), muon_var_name('Muon_lbl', 'charge')])
+            df = df.Define("direct_smeared_simple_pt0", "direct_smeared_simple_pt[goodMuons][0]")
+            results.append(df.HistoBoost(
+                "reso_simple_direct", axes,
+                [nominal_cols[0], 'direct_smeared_simple_pt0', *nominal_cols[2:], 'nominal_weight']
+            ))
+        elif whatAnalysis == ROOT.wrem.AnalysisType.Dilepton:
+            df = df.DefineSlot("trigMuons_pt0_direct_smeared_simple", helper, ['trigMuons_pt0', 'trigMuons_eta0', 'trigMuons_charge0'])
+            df = df.DefineSlot("nonTrigMuons_pt0_direct_smeared_simple", helper, ['nonTrigMuons_pt0', 'nonTrigMuons_eta0', 'nonTrigMuons_charge0'])
+            df = df.Define("trigMuons_mom4_direct_smeared_simple", "ROOT::Math::PtEtaPhiMVector(trigMuons_pt0_direct_smeared_simple, trigMuons_eta0, trigMuons_phi0, wrem::muon_mass)")
+            df = df.Define("nonTrigMuons_mom4_direct_smeared_simple", "ROOT::Math::PtEtaPhiMVector(nonTrigMuons_pt0_direct_smeared_simple, nonTrigMuons_eta0, nonTrigMuons_phi0, wrem::muon_mass)")
+            df = df.Define("ll_mom4_direct_smeared_simple", "ROOT::Math::PxPyPzEVector(trigMuons_mom4_direct_smeared_simple)+ROOT::Math::PxPyPzEVector(nonTrigMuons_mom4_direct_smeared_simple)")
+            df = df.Define("mll_direct_smeared_simple", "ll_mom4_direct_smeared_simple.mass()")
+            results.append(df.HistoBoost(
+                "reso_simple_direct", axes,
+                ['mll_direct_smeared_simple', *nominal_cols[1:], 'nominal_weight']
+            ))
+
+    if 'simpleTransform' in var_method:
+        helper = smearing_uncertainty_helper['simpleTransform']
+
+        if whatAnalysis == ROOT.wrem.AnalysisType.Wmass:
+            helper_var['simpleTransform'] = ROOT.wrem.SmearingHelperSimpleTransform(simple_sigma_rel)
+            df = df.Define("simple_transform_pt", helper, [muon_var_name('Muon_lbl', 'pt'), muon_var_name('Muon_lbl', 'eta'), muon_var_name('Muon_lbl', 'charge'), f"{reco_sel_GF}_response_weight"])
+            df = df.Define("simple_transform_pt0", "simple_transform_pt[goodMuons][0]")
+            results.append(df.HistoBoost(
+                "reso_simple_tranform", axes,
+                [nominal_cols[0], 'simple_transform_pt0', *nominal_cols[2:], 'nominal_weight']
+            ))
+        elif whatAnalysis == ROOT.wrem.AnalysisType.Dilepton:
+            df = df.Define("trigMuons_pt0_simple_transform", helper, ['trigMuons_pt0', 'trigMuons_eta0', 'trigMuons_charge0', f"{reco_sel_GF}_response_weight"])
+            df = df.Define("nonTrigMuons_pt0_simple_transform", helper, ['nonTrigMuons_pt0', 'nonTrigMuons_eta0', 'nonTrigMuons_charge0', f"{reco_sel_GF}_response_weight"])
+            df = df.Define("trigMuons_mom4_simple_transform", "ROOT::Math::PtEtaPhiMVector(trigMuons_pt0_simple_transform, trigMuons_eta0, trigMuons_phi0, wrem::muon_mass)")
+            df = df.Define("nonTrigMuons_mom4_simple_transform", "ROOT::Math::PtEtaPhiMVector(nonTrigMuons_pt0_simple_transform, nonTrigMuons_eta0, nonTrigMuons_phi0, wrem::muon_mass)")
+            df = df.Define("ll_mom4_simple_transform", "ROOT::Math::PxPyPzEVector(trigMuons_mom4_simple_transform)+ROOT::Math::PxPyPzEVector(nonTrigMuons_mom4_simple_transform)")
+            df = df.Define("mll_simple_transform", "ll_mom4_simple_transform.mass()")
+            results.append(df.HistoBoost(
+                "reso_simple_transform", axes,
+                ['mll_simple_transform', *nominal_cols[1:], 'nominal_weight']
+            ))
+
+    if 'simpleWeights' in var_method:
+        helper = smearing_uncertainty_helper['simpleWeights']
+        df = df.Define("muonResolutionSyst_weights_simple", helper,
+            [
+                f"{reco_sel_GF}_recoPt",
+                f"{reco_sel_GF}_recoEta",
+                f"{reco_sel_GF}_recoCharge",
+                f"{reco_sel_GF}_response_weight",
                 "nominal_weight"
             ]
         )
-    
-        muonResolutionSyst_responseWeights = df.HistoBoost(
-                "nominal_muonResolutionSyst_responseWeights", axes,
-                [*nominal_cols, "muonResolutionSyst_weights"],
-                tensor_axes = smearing_uncertainty_helper.tensor_axes, storage=hist.storage.Double()
-            )
-        results.append(muonResolutionSyst_responseWeights)
-    elif var_method == 'directSmearing':
-        df = df.Define("nom_pt", nominal_cols[1])
-        df = df.Define("nom_eta", nominal_cols[0])
-        df = df.Define("goodMuons_pt0_resoVarDirectSmearing", smearing_uncertainty_helper,
-            ["run", "luminosityBlock", "event", "nom_pt", f"nom_eta"]
+        muonResolutionSyst_responseWeights_simple = df.HistoBoost(
+            "reso_simple_weight", axes,
+            [*nominal_cols, "muonResolutionSyst_weights_simple"],
+            storage=hist.storage.Double()
         )
-        for i in range(120):
-            df = df.Define(f"goodMuons_pt0_resoVarDirectSmearing{i}", f"goodMuons_pt0_resoVarDirectSmearing({i})")
-            results.append(df.HistoBoost(
-                f"muonResolutionSyst_directSmearing{i}", axes,
-                [nominal_cols[0], f"goodMuons_pt0_resoVarDirectSmearing{i}", *nominal_cols[2:], "nominal_weight"],
-                storage=hist.storage.Double()
-            ))
+        results.append(muonResolutionSyst_responseWeights_simple)
 
-    df = df.Define("one", "1U")
-    helper = ROOT.wrem.SmearingHelperSimple(1e-3, max(ROOT.ROOT.GetThreadPoolSize(), 1))
-
-    if whatAnalysis == ROOT.wrem.AnalysisType.Wmass:
-        df = df.DefineSlot("smeared_pt", helper, [muon_var_name('Muon_lbl', 'pt'), muon_var_name('Muon_lbl', 'eta'), muon_var_name('Muon_lbl', 'charge')])
-        df = df.Define("smeared_pt0", "smeared_pt[goodMuons][0]")
-        df = df.Define("lbl_pt0", "Muon_lblPt[goodMuons][0]")
-        results.append(df.HistoBoost(
-            "hist_lbl_pt", axes,
-            [nominal_cols[0], 'lbl_pt0', *nominal_cols[2:], 'nominal_weight']
-        ))
-        results.append(df.HistoBoost(
-            "hist_smaered_pt", axes,
-            [nominal_cols[0], 'smeared_pt0', *nominal_cols[2:], 'nominal_weight']
-        ))
-    elif whatAnalysis == ROOT.wrem.AnalysisType.Dilepton:
-        helper = ROOT.wrem.SmearingHelperSSimple(1e-2, max(ROOT.ROOT.GetThreadPoolSize(), 1))
-        df = df.DefineSlot("trigMuons_pt0_smeared", helper, ['trigMuons_pt0', 'trigMuons_eta0', 'trigMuons_charge0'])
-        df = df.DefineSlot("nonTrigMuons_pt0_smeared", helper, ['nonTrigMuons_pt0', 'nonTrigMuons_eta0', 'nonTrigMuons_charge0'])
-        df = df.Define("trigMuons_mom4_smeared", "ROOT::Math::PtEtaPhiMVector(trigMuons_pt0_smeared, trigMuons_eta0, trigMuons_phi0, wrem::muon_mass)")
-        df = df.Define("nonTrigMuons_mom4_smeared", "ROOT::Math::PtEtaPhiMVector(nonTrigMuons_pt0_smeared, nonTrigMuons_eta0, nonTrigMuons_phi0, wrem::muon_mass)")
-        df = df.Define("ll_mom4_smeared", "ROOT::Math::PxPyPzEVector(trigMuons_mom4_smeared)+ROOT::Math::PxPyPzEVector(nonTrigMuons_mom4_smeared)")
-        df = df.Define("mll_smeared", "ll_mom4_smeared.mass()")
-        results.append(df.HistoBoost(
-            "hist_smeared_mll", axes,
-            ['mll_smeared', *nominal_cols[1:], 'nominal_weight']
-        ))
-        print("hello")
     return df
 
 

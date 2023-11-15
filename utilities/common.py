@@ -206,7 +206,7 @@ def common_parser(for_reco_highPU=False):
         parser.add_argument("--excludeFlow", action='store_true', help="Excludes underflow and overflow bins in main axes")
         parser.add_argument("--biasCalibration", type=str, default=None, choices=["binned","parameterized", "A", "M"], help="Adjust central value by calibration bias hist for simulation")
         parser.add_argument("--noSmearing", action='store_true', help="Disable resolution corrections")
-        parser.add_argument("--resoVarMethod", type=str, default='eventWeights', choices=['eventWeights', 'directSmearing'])
+        parser.add_argument("--resoVarMethod", type=str, nargs = "*", default=['eventWeights'], choices=['eventWeights', 'directSmearing', 'directSmearingSimple', 'simpleTransform', 'simpleWeights'])
         # options for efficiencies
         parser.add_argument("--trackerMuons", action='store_true', help="Use tracker muons instead of global muons (need appropriate scale factors too). This is obsolete")
         parser.add_argument("--binnedScaleFactors", action='store_true', help="Use binned scale factors (different helpers)")

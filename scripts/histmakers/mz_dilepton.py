@@ -348,7 +348,7 @@ def build_graph(df, dataset):
                 )
                 results.append(muonScaleSyst_responseWeights)
 
-                df = muon_calibration.add_resolution_uncertainty(df, axes, results, cols, smearing_uncertainty_helper, reco_sel_GF, args.resoVarMethod)
+                df = muon_calibration.add_resolution_uncertainty(df, axes, results, cols, smearing_uncertainty_helper, reco_sel_GF, thisAnalysis, args.resoVarMethod) 
                 if args.validationHists:
                     df = muon_validation.make_hists_for_reso_weights_perse(
                         df, axes, cols, "muonResolutionSyst_weights", "nominal_weight", results
