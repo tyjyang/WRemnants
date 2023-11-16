@@ -16,8 +16,8 @@
 namespace wrem {
 
 using ROOT::VecOps::RVec;
-static const double g_RESO_WEIGHT_LB= 0.9;
-static const double g_RESO_WEIGHT_UB = 1.1;
+static const double g_RESO_WEIGHT_LB= 0.0;
+static const double g_RESO_WEIGHT_UB = 2.5;
 
 template<typename T>
 ROOT::VecOps::RVec<ROOT::VecOps::RVec<T>> splitNestedRVec(const ROOT::VecOps::RVec<T> &vec, const ROOT::VecOps::RVec<int> &counts) {
@@ -1536,7 +1536,7 @@ public:
 
     double operator() (const RVec<float> &recPts, const RVec<float> &recEtas, const RVec<int> &recCharges, const RVec<std::pair<double, double>> &weights, const double nominal_weight = 1.0) {
 
-        double res = nominal_weight;
+        double res = 1.0;
         for (std::size_t i = 0; i < recPts.size(); ++i) {
             const double pt = recPts[i];
             const double eta = recEtas[i];
@@ -1551,6 +1551,8 @@ public:
             const double iweight = std::clamp(1. + dweight, -10., 10.);
             res *= iweight;
         }
+        res = std::clamp(res, g_RESO_WEIGHT_LB, g_RESO_WEIGHT_UB);
+        res *= nominal_weight;
 
         return res;
     }
@@ -1634,72 +1636,11 @@ public:
             const double ptout = pout/std::cosh(eta);
 
 
-            //res.emplace_back(ptout);
-            res.emplace_back(pt * 1.0001);
+            res.emplace_back(ptout);
+            //res.emplace_back(pt * 1.0001);
         }
 
         return res;
-    }
-
-
-private:
-    double sigmarel_;
-    std::vector<mt19937> rng_;
-
-};
-
-class SmearingHelperSSimpleTransform {
-
-public:
-    SmearingHelperSSimpleTransform(const double sigmarel) : sigmarel_(sigmarel) {}
-
-    double operator() (float pt, float eta, int charge, const RVec<std::pair<double, double>> &weights) {
-
-        const double dweightdscale = weights[0].first;
-
-        const double qop = charge/pt/std::cosh(eta);
-
-        const double dsigmasq = sigmarel_*sigmarel_*qop*qop;
-
-        const double qopout = qop + 0.5*dweightdscale*dsigmasq;
-        const double pout = std::fabs(1./qopout);
-
-        const double ptout = pout/std::cosh(eta);
-
-        return ptout;
-    }
-
-private:
-    double sigmarel_;
-};
-
-class SmearingHelperSSimple {
-
-public:
-    SmearingHelperSSimple(const double sigmarel, const unsigned int nslots = 1) : sigmarel_(sigmarel) {
-        const unsigned int nslotsactual = std::max(nslots, 1U);
-        rng_.reserve(nslotsactual);
-        auto const hash = std::hash<std::string>()("SmearingHelperSimple");
-        for (std::size_t islot = 0; islot < nslotsactual; ++islot) {
-            std::seed_seq seq{hash, islot};
-            rng_.emplace_back(seq);
-        }
-    }
-
-    double operator() (const unsigned int slot, const float pt, const float eta, const int charge) {
-
-        const double qop = charge/pt/std::cosh(eta);
-
-        const double dsigma = sigmarel_*qop;
-
-        std::normal_distribution gaus{qop, dsigma};
-
-        const double qopout = gaus(rng_[slot]);
-        const double pout = std::fabs(1./qopout);
-
-        const double ptout = pout/std::cosh(eta);
-
-        return ptout;
     }
 
 
@@ -1728,7 +1669,7 @@ public:
             const double dmu = scalerel_*qop;
 
             const double dweight = dweightdmu*dmu;
-            const double iweight = std::clamp(1. + dweight, -10., 10.);
+            const double iweight = std::clamp(1. + dweight, -10.0, 10.0);
             res *= iweight;
         }
 
